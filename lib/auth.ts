@@ -34,18 +34,18 @@ export async function getSellerFromRequest(request: NextRequest): Promise<Seller
 }
 
 /** Resolve seller from Authorization: Bearer <sender_token>. Used by Python sender. */
-export async function getSellerBySenderToken(request: NextRequest): Promise<{ id: string } | null> {
+export async function getSellerBySenderToken(request: NextRequest): Promise<{ id: string; role: 'admin' | 'sdr' } | null> {
   const auth = request.headers.get('authorization');
   const token = auth?.startsWith('Bearer ') ? auth.slice(7).trim() : null;
   if (!token) return null;
 
   const { data } = await getSupabaseAdmin()
     .from('sellers')
-    .select('id')
+    .select('id, role')
     .eq('sender_token', token)
     .maybeSingle();
 
-  return data ? { id: data.id } : null;
+  return data ? { id: data.id, role: data.role as 'admin' | 'sdr' } : null;
 }
 
 /** Generate a new sender token (hex string). */

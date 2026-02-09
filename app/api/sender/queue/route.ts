@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabaseAdmin';
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin';
 import { getSenderConfig } from '@/lib/sender-config';
 import { getSellerBySenderToken } from '@/lib/auth';
 import { normalizePhone } from '@/lib/data-cleaning';
@@ -13,17 +13,25 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const isAdmin = seller.role === 'admin';
   const limit = Math.min(parseInt(request.nextUrl.searchParams.get('limit') || '50', 10), 100);
   const config = getSenderConfig();
+  const supabase = getSupabaseAdmin();
 
-  const { data: sends, error } = await supabaseAdmin
+  // Build query: admin token gets ALL pending messages, SDR token gets only theirs
+  let query = supabase
     .from('sends')
-    .select('id, lead_id, message_text, created_at')
+    .select('id, lead_id, message_text, assigned_to, created_at')
     .eq('channel', 'whatsapp')
     .eq('status', 'pending')
-    .eq('assigned_to', seller.id)
     .order('created_at', { ascending: true })
     .limit(limit * 2);
+
+  if (!isAdmin) {
+    query = query.eq('assigned_to', seller.id);
+  }
+
+  const { data: sends, error } = await query;
 
   if (error) {
     console.error('[sender/queue]', error);
@@ -35,27 +43,41 @@ export async function GET(request: NextRequest) {
   }
 
   const leadIds = [...new Set(sends.map((s) => s.lead_id))];
-  const { data: leads } = await supabaseAdmin
+  const { data: leads } = await supabase
     .from('leads')
     .select('id, contact_phone, contact_name, business_name')
     .in('id', leadIds);
   const leadMap = new Map((leads || []).map((l) => [l.id, l]));
 
+  // Recontact filter: gather recently contacted phones per assigned SDR
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - config.recontact_skip_days);
   const cutoffIso = cutoff.toISOString();
 
-  const { data: recentSends } = await supabaseAdmin
+  let recentQuery = supabase
     .from('sends')
-    .select('lead_id')
+    .select('lead_id, assigned_to')
     .eq('channel', 'whatsapp')
-    .eq('assigned_to', seller.id)
     .in('status', ['sent', 'replied'])
     .gte('sent_at', cutoffIso);
-  const recentLeadIds = new Set((recentSends || []).map((r) => r.lead_id));
-  const recentPhones = new Set(
-    (leads || []).filter((l) => recentLeadIds.has(l.id) && l.contact_phone).map((l) => normalizePhone(l.contact_phone!))
-  );
+
+  if (!isAdmin) {
+    recentQuery = recentQuery.eq('assigned_to', seller.id);
+  }
+
+  const { data: recentSends } = await recentQuery;
+
+  // Build a set of "assignedTo:normalizedPhone" keys for recontact checking
+  const recentKeys = new Set<string>();
+  for (const r of recentSends || []) {
+    const lead = leadMap.get(r.lead_id) || (leads || []).find((l) => l.id === r.lead_id);
+    if (lead?.contact_phone) {
+      const normalized = normalizePhone(lead.contact_phone);
+      if (normalized) {
+        recentKeys.add(`${r.assigned_to}:${normalized}`);
+      }
+    }
+  }
 
   const items: Array<{
     send_id: string;
@@ -66,12 +88,14 @@ export async function GET(request: NextRequest) {
     message_text: string;
     created_at: string;
   }> = [];
+
   for (const s of sends) {
     const lead = leadMap.get(s.lead_id);
     const phone = lead?.contact_phone ?? null;
     if (!phone) continue;
     const normalized = normalizePhone(phone);
-    if (recentPhones.has(normalized)) continue;
+    // Check recontact per the assigned SDR
+    if (recentKeys.has(`${s.assigned_to}:${normalized}`)) continue;
     items.push({
       send_id: s.id,
       lead_id: s.lead_id,
@@ -86,5 +110,3 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({ config, pending: items });
 }
-
-// normalizePhone is imported from @/lib/data-cleaning

@@ -55,7 +55,7 @@ export default function Home() {
           )}
         </div>
         <p style={{ color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-          Upload CSV, manage templates, queue WhatsApp messages. Python sender picks up the queue.
+          Upload CSV, manage templates, queue WhatsApp messages. The Python sender runs centrally with your service token and processes all SDR queues on autopilot.
         </p>
         {me?.role === 'admin' && (
           <div className="nav-grid">
@@ -67,7 +67,7 @@ export default function Home() {
         )}
         {me?.role === 'sdr' && (
           <div className="nav-grid">
-            <Link href="/me" className="nav-link">My sender token</Link>
+            <Link href="/me" className="nav-link">My account</Link>
           </div>
         )}
         {!me && (
@@ -79,7 +79,7 @@ export default function Home() {
           </div>
         )}
         <p style={{ marginTop: '2rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-          API: <code>GET /api/health</code>, <code>GET /api/sender/queue</code> (with SDR token), etc.
+          API: <code>GET /api/health</code>, <code>GET /api/sender/queue</code> (with service token), etc.
         </p>
       </main>
     </div>

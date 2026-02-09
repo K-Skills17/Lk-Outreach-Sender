@@ -56,6 +56,11 @@ export default function SellersPage() {
   const [regenId, setRegenId] = useState<string | null>(null);
   const [regenToken, setRegenToken] = useState<string | null>(null);
 
+  // Service token state
+  const [hasServiceToken, setHasServiceToken] = useState(false);
+  const [serviceToken, setServiceToken] = useState<string | null>(null);
+  const [generatingToken, setGeneratingToken] = useState(false);
+
   // Batch upload state
   const [showBatch, setShowBatch] = useState(false);
   const [batchParsed, setBatchParsed] = useState<{ email: string; name?: string; password: string }[]>([]);
@@ -71,8 +76,29 @@ export default function SellersPage() {
     setLoading(false);
   }
 
+  async function loadServiceToken() {
+    const res = await fetch('/api/sellers/service-token');
+    const data = await res.json();
+    if (res.ok) setHasServiceToken(data.has_token);
+  }
+
+  async function handleGenerateServiceToken() {
+    setGeneratingToken(true);
+    try {
+      const res = await fetch('/api/sellers/service-token', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setServiceToken(data.sender_token);
+        setHasServiceToken(true);
+      }
+    } finally {
+      setGeneratingToken(false);
+    }
+  }
+
   useEffect(() => {
     load();
+    loadServiceToken();
   }, []);
 
   async function handleAdd(e: React.FormEvent) {
@@ -218,8 +244,41 @@ export default function SellersPage() {
           </span>
         </div>
         <p style={{ color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-          Add SDRs (sellers). Each gets a sender token for the Python app. Reset password or regenerate token as needed.
+          Create SDRs for assignment tracking. The Python sender runs centrally using your service token -- SDRs don&apos;t need to install or configure anything.
         </p>
+
+        {/* Service Token Section */}
+        <div className="card" style={{ marginBottom: '1.5rem', border: '1px solid var(--color-border)' }}>
+          <h3 style={{ marginBottom: '0.5rem' }}>Centralized Sender (Service Token)</h3>
+          <p style={{ color: 'var(--color-text-muted)', marginBottom: '0.75rem', fontSize: '0.875rem' }}>
+            Use this token in the Python sender to process messages for <strong>all SDRs</strong> from one machine.
+            SDRs are created just for assignment tracking -- they don&apos;t need to run anything.
+          </p>
+          {serviceToken && (
+            <div className="alert alert-success" style={{ marginBottom: '0.75rem' }}>
+              <strong>Service token (save this -- shown only once):</strong>
+              <pre style={{ marginTop: '0.5rem', wordBreak: 'break-all' }}>{serviceToken}</pre>
+              <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                In <code>python-sender/.env</code> set:<br />
+                <code>SENDER_SERVICE_TOKEN={serviceToken}</code>
+              </p>
+              <button type="button" className="btn btn-ghost" style={{ marginTop: '0.5rem' }} onClick={() => setServiceToken(null)}>Dismiss</button>
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleGenerateServiceToken}
+            disabled={generatingToken}
+          >
+            {generatingToken ? 'Generating…' : hasServiceToken ? 'Regenerate service token' : 'Generate service token'}
+          </button>
+          {hasServiceToken && !serviceToken && (
+            <span style={{ marginLeft: '0.75rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+              Service token is active. Regenerate only if you need a new one.
+            </span>
+          )}
+        </div>
 
         {/* Batch Upload Section */}
         {showBatch && (

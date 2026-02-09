@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { supabaseAdmin } from '@/lib/supabaseAdmin';
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin';
 import { getSellerBySenderToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -16,29 +16,36 @@ export async function POST(request: NextRequest) {
   if (!seller) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  const isAdmin = seller.role === 'admin';
+
   try {
     const body = await request.json();
     const { send_id, error_message } = bodySchema.parse(body);
 
-    const { data: sendRow, error: fetchErr } = await supabaseAdmin
+    const supabase = getSupabaseAdmin();
+
+    const { data: sendRow, error: fetchErr } = await supabase
       .from('sends')
-      .select('id')
+      .select('id, assigned_to')
       .eq('id', send_id)
-      .eq('assigned_to', seller.id)
       .single();
     if (fetchErr || !sendRow) {
-      return NextResponse.json({ error: 'Send not found or forbidden' }, { status: 404 });
+      return NextResponse.json({ error: 'Send not found' }, { status: 404 });
+    }
+    // Admin token can mark any message; SDR token can only mark their own
+    if (!isAdmin && sendRow.assigned_to !== seller.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const { error } = await supabaseAdmin
+    const { error } = await supabase
       .from('sends')
       .update({
         status: 'failed',
         error_message: error_message ?? null,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', send_id)
-      .eq('assigned_to', seller.id);
+      .eq('id', send_id);
 
     if (error) {
       console.error('[sender/mark-failed]', error);

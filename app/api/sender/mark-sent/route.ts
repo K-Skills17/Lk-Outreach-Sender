@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { supabaseAdmin } from '@/lib/supabaseAdmin';
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin';
 import { getSellerBySenderToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
@@ -16,12 +16,17 @@ export async function POST(request: NextRequest) {
   if (!seller) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  const isAdmin = seller.role === 'admin';
+
   try {
     const body = await request.json();
     const { send_id, sent_at } = bodySchema.parse(body);
     const at = sent_at || new Date().toISOString();
 
-    const { data: sendRow, error: fetchErr } = await supabaseAdmin
+    const supabase = getSupabaseAdmin();
+
+    const { data: sendRow, error: fetchErr } = await supabase
       .from('sends')
       .select('lead_id, assigned_to')
       .eq('id', send_id)
@@ -29,11 +34,12 @@ export async function POST(request: NextRequest) {
     if (fetchErr || !sendRow?.lead_id) {
       return NextResponse.json({ error: 'Send not found' }, { status: 404 });
     }
-    if (sendRow.assigned_to !== seller.id) {
+    // Admin token can mark any message; SDR token can only mark their own
+    if (!isAdmin && sendRow.assigned_to !== seller.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const { error } = await supabaseAdmin
+    const { error } = await supabase
       .from('sends')
       .update({
         status: 'sent',
@@ -41,15 +47,14 @@ export async function POST(request: NextRequest) {
         error_message: null,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', send_id)
-      .eq('assigned_to', seller.id);
+      .eq('id', send_id);
 
     if (error) {
       console.error('[sender/mark-sent]', error);
       return NextResponse.json({ error: 'Update failed' }, { status: 500 });
     }
 
-    await supabaseAdmin
+    await supabase
       .from('leads')
       .update({ last_contacted_at: at, updated_at: new Date().toISOString() })
       .eq('id', sendRow.lead_id);
