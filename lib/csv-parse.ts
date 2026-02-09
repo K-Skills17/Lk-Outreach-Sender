@@ -2,6 +2,34 @@
  * Simple CSV parser: first row = headers, then data rows.
  * Returns array of objects keyed by header (trimmed). Handles quoted fields.
  */
+
+import {
+  normalizePhone,
+  cleanName,
+  cleanBusinessName,
+  cleanEmail,
+  cleanCategory,
+  cleanAddress,
+  cleanUrl,
+  cleanRating,
+  cleanReviewCount,
+  cleanText,
+  cleanRawPayload,
+  GOOGLE_MAPS_PHONE_KEYS,
+  GOOGLE_MAPS_NAME_KEYS,
+  GOOGLE_MAPS_BUSINESS_KEYS,
+  GOOGLE_MAPS_EMAIL_KEYS,
+  GOOGLE_MAPS_INDUSTRY_KEYS,
+  GOOGLE_MAPS_ADDRESS_KEYS,
+  GOOGLE_MAPS_WEBSITE_KEYS,
+  GOOGLE_MAPS_RATING_KEYS,
+  GOOGLE_MAPS_REVIEWS_KEYS,
+  GOOGLE_MAPS_SUMMARY_KEYS,
+} from './data-cleaning';
+
+/** Maximum CSV file size in bytes (10 MB) */
+export const MAX_CSV_SIZE = 10 * 1024 * 1024;
+
 export function parseCSV(csvText: string): Record<string, string>[] {
   const lines = csvText.split(/\r?\n/).map((l) => l.trim());
   const nonEmpty = lines.filter((l) => l.length > 0);
@@ -54,10 +82,6 @@ function parseCSVLine(line: string): string[] {
   return out;
 }
 
-const PHONE_KEYS = ['phone', 'telefone', 'whatsapp', 'contact_phone', 'celular', 'fone'];
-const NAME_KEYS = ['nome', 'name', 'contact_name', 'nome_contato'];
-const BUSINESS_KEYS = ['empresa', 'business_name', 'company', 'negocio', 'clinica'];
-
 export function findColumn(row: Record<string, string>, keys: string[]): string | null {
   const lower: Record<string, string> = {};
   for (const k of Object.keys(row)) {
@@ -79,24 +103,56 @@ export function rowToLeadFields(row: Record<string, string>): {
   summary: string | null;
   raw_payload: Record<string, unknown>;
 } {
-  const phone = findColumn(row, PHONE_KEYS);
-  const contact_name = findColumn(row, NAME_KEYS);
-  const business_name = findColumn(row, BUSINESS_KEYS);
-  const industry =
-    findColumn(row, ['industry', 'setor', 'niche', 'categoria', 'segmento']) ?? null;
-  const contact_email = findColumn(row, ['email', 'contact_email', 'e-mail']) ?? null;
-  const summary = findColumn(row, ['summary', 'resumo', 'observacao', 'notes']) ?? null;
+  // Extract raw values using expanded column key lists (supports Google Maps scrapers)
+  const rawPhone = findColumn(row, GOOGLE_MAPS_PHONE_KEYS);
+  const rawName = findColumn(row, GOOGLE_MAPS_NAME_KEYS);
+  const rawBusiness = findColumn(row, GOOGLE_MAPS_BUSINESS_KEYS);
+  const rawIndustry = findColumn(row, GOOGLE_MAPS_INDUSTRY_KEYS);
+  const rawEmail = findColumn(row, GOOGLE_MAPS_EMAIL_KEYS);
+  const rawSummary = findColumn(row, GOOGLE_MAPS_SUMMARY_KEYS);
+
+  // Extract Google Maps specific fields for enriched raw_payload
+  const rawAddress = findColumn(row, GOOGLE_MAPS_ADDRESS_KEYS);
+  const rawWebsite = findColumn(row, GOOGLE_MAPS_WEBSITE_KEYS);
+  const rawRating = findColumn(row, GOOGLE_MAPS_RATING_KEYS);
+  const rawReviews = findColumn(row, GOOGLE_MAPS_REVIEWS_KEYS);
+
+  // Apply data cleaning
+  const phone = rawPhone ? normalizePhone(rawPhone) : null;
+  const contact_name = rawName ? cleanName(rawName) : null;
+  const business_name = rawBusiness ? cleanBusinessName(rawBusiness) : null;
+  const industry = rawIndustry ? cleanCategory(rawIndustry) : null;
+  const contact_email = rawEmail ? cleanEmail(rawEmail) : null;
+  const summary = rawSummary ? cleanText(rawSummary) : null;
+
+  // Build raw_payload with all original columns, cleaned
   const raw_payload: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
     if (v !== undefined && v !== '') raw_payload[k.trim()] = v;
   }
+
+  // Enrich raw_payload with cleaned Google Maps fields
+  if (rawAddress) raw_payload._cleaned_address = cleanAddress(rawAddress);
+  if (rawWebsite) raw_payload._cleaned_website = cleanUrl(rawWebsite);
+  if (rawRating) {
+    const rating = cleanRating(rawRating);
+    if (rating !== null) raw_payload._cleaned_rating = rating;
+  }
+  if (rawReviews) {
+    const count = cleanReviewCount(rawReviews);
+    if (count !== null) raw_payload._cleaned_reviews_count = count;
+  }
+
+  // Clean the entire raw_payload (remove empty/junk values)
+  const cleanedPayload = cleanRawPayload(raw_payload);
+
   return {
-    contact_phone: phone ?? null,
-    contact_name: contact_name ?? null,
-    business_name: business_name ?? null,
-    industry,
-    contact_email,
-    summary,
-    raw_payload,
+    contact_phone: phone || null,
+    contact_name: contact_name || null,
+    business_name: business_name || null,
+    industry: industry || null,
+    contact_email: contact_email || null,
+    summary: summary || null,
+    raw_payload: cleanedPayload,
   };
 }

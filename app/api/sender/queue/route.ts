@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { getSenderConfig } from '@/lib/sender-config';
 import { getSellerBySenderToken } from '@/lib/auth';
+import { normalizePhone } from '@/lib/data-cleaning';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -86,8 +87,4 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ config, pending: items });
 }
 
-function normalizePhone(phone: string): string {
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length === 10 || digits.length === 11) return '55' + digits;
-  return digits;
-}
+// normalizePhone is imported from @/lib/data-cleaning

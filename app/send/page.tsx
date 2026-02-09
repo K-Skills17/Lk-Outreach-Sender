@@ -35,6 +35,9 @@ export default function SendPage() {
       if ((templatesData.templates ?? []).length > 0) setTemplateId(templatesData.templates[0].id);
       const sdrList = (sellersData.sellers ?? []).filter((s: Seller) => s.role === 'sdr');
       if (sdrList.length > 0) setAssignedTo(sdrList[0].id);
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : 'Failed to load data');
+    }).finally(() => {
       setLoading(false);
     });
   }, []);

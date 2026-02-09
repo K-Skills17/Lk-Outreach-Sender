@@ -1,8 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 
-const protectedPaths = ['/', '/upload', '/templates', '/send', '/sellers', '/me'];
-
 function isProtected(pathname: string): boolean {
   if (pathname === '/login' || pathname === '/setup') return false;
   return (
