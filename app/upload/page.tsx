@@ -3,10 +3,18 @@
 import { useState } from 'react';
 import Link from 'next/link';
 
+type CleaningStats = {
+  total_rows: number;
+  phones_normalized: number;
+  duplicates_skipped: number;
+  invalid_rows: number;
+};
+
 type Result = {
   leads: { id: string }[];
   errors: { row: number; message: string }[];
   created?: number;
+  cleaning?: CleaningStats;
 };
 
 export default function UploadPage() {
@@ -30,7 +38,7 @@ export default function UploadPage() {
         setError(data.error ?? 'Upload failed');
         return;
       }
-      setResult({ leads: data.leads ?? [], errors: data.errors ?? [], created: data.created });
+      setResult({ leads: data.leads ?? [], errors: data.errors ?? [], created: data.created, cleaning: data.cleaning });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Request failed');
     } finally {
@@ -69,6 +77,14 @@ export default function UploadPage() {
         {result && (
           <div className="card" style={{ marginTop: '1rem' }}>
             <p className="card-title">Processed: {result.leads.length} lead(s) created/updated.</p>
+            {result.cleaning && (
+              <ul style={{ fontSize: '0.9rem', marginTop: '0.5rem', paddingLeft: '1.25rem', color: 'var(--color-text-muted)' }}>
+                <li>Total rows parsed: {result.cleaning.total_rows}</li>
+                {result.cleaning.phones_normalized > 0 && <li>Phones cleaned/normalized: {result.cleaning.phones_normalized}</li>}
+                {result.cleaning.duplicates_skipped > 0 && <li>Duplicate rows skipped: {result.cleaning.duplicates_skipped}</li>}
+                {result.cleaning.invalid_rows > 0 && <li>Invalid rows: {result.cleaning.invalid_rows}</li>}
+              </ul>
+            )}
             {result.errors.length > 0 && (
               <>
                 <p style={{ color: 'var(--color-error)', fontSize: '0.9rem', marginTop: '0.5rem' }}>Row errors: {result.errors.length}</p>
