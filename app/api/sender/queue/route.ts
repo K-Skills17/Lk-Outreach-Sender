@@ -1,21 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { getSenderConfig } from '@/lib/sender-config';
+import { getSellerBySenderToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-function requireSenderToken(req: NextRequest): boolean {
-  const auth = req.headers.get('authorization');
-  const token = process.env.SENDER_SERVICE_TOKEN;
-  if (!token) return false;
-  return auth === `Bearer ${token}`;
-}
-
 export async function GET(request: NextRequest) {
-  if (!requireSenderToken(request)) {
+  const seller = await getSellerBySenderToken(request);
+  if (!seller) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
   const limit = Math.min(parseInt(request.nextUrl.searchParams.get('limit') || '50', 10), 100);
   const config = getSenderConfig();
 
@@ -24,6 +20,7 @@ export async function GET(request: NextRequest) {
     .select('id, lead_id, message_text, created_at')
     .eq('channel', 'whatsapp')
     .eq('status', 'pending')
+    .eq('assigned_to', seller.id)
     .order('created_at', { ascending: true })
     .limit(limit * 2);
 
@@ -51,6 +48,7 @@ export async function GET(request: NextRequest) {
     .from('sends')
     .select('lead_id')
     .eq('channel', 'whatsapp')
+    .eq('assigned_to', seller.id)
     .in('status', ['sent', 'replied'])
     .gte('sent_at', cutoffIso);
   const recentLeadIds = new Set((recentSends || []).map((r) => r.lead_id));

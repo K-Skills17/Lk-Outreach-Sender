@@ -1,131 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { generateOutreachMessages, pickOneMessage } from '@/lib/ai-outreach';
-import { sendOutreachEmail } from '@/lib/email';
+import { getSellerFromRequest } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-function requireLeadGenToken(req: NextRequest): boolean {
-  const auth = req.headers.get('authorization');
-  const token = process.env.LEAD_GEN_API_TOKEN;
-  if (!token) return false;
-  return auth === `Bearer ${token}` || auth === `Bearer ${token.trim()}`;
-}
+/**
+ * List leads for the queue-send UI. Optional: limit, not_contacted_days (only leads not contacted in X days).
+ */
+export async function GET(request: NextRequest) {
+  const seller = await getSellerFromRequest(request);
+  if (!seller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (seller.role !== 'admin') return NextResponse.json({ error: 'Admin only' }, { status: 403 });
 
-const ingestSchema = z.object({
-  external_id: z.string().optional(),
-  contact_name: z.string().optional(),
-  contact_email: z.string().email().optional(),
-  contact_phone: z.string().optional(),
-  business_name: z.string().optional(),
-  industry: z.string().optional(),
-  summary: z.string().optional(),
-  raw_payload: z.record(z.unknown()).optional(),
-  auto_send: z.boolean().optional().default(true),
-  send_email: z.boolean().optional().default(false),
-});
+  const limit = Math.min(parseInt(request.nextUrl.searchParams.get('limit') || '500', 10), 1000);
+  const notContactedDays = request.nextUrl.searchParams.get('not_contacted_days');
 
-export async function POST(request: NextRequest) {
-  if (!requireLeadGenToken(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  let query = supabaseAdmin
+    .from('leads')
+    .select('id, contact_name, contact_phone, business_name, last_contacted_at, created_at')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (notContactedDays != null && notContactedDays !== '') {
+    const days = parseInt(notContactedDays, 10);
+    if (!Number.isNaN(days) && days >= 0) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      query = query.or(`last_contacted_at.is.null,last_contacted_at.lt.${cutoff.toISOString()}`);
+    }
   }
-  try {
-    const body = await request.json();
-    const data = ingestSchema.parse(body);
 
-    const leadRow = {
-      external_id: data.external_id ?? null,
-      contact_name: data.contact_name ?? null,
-      contact_email: data.contact_email ?? null,
-      contact_phone: data.contact_phone ?? null,
-      business_name: data.business_name ?? null,
-      industry: data.industry ?? null,
-      summary: data.summary ?? null,
-      raw_payload: data.raw_payload ?? null,
-      generated_message: null as string | null,
-    };
-
-    const { data: lead, error: insertError } = await supabaseAdmin
-      .from('leads')
-      .insert(leadRow)
-      .select()
-      .single();
-
-    if (insertError || !lead) {
-      console.error('[leads] insert error', insertError);
-      return NextResponse.json({ error: 'Failed to create lead' }, { status: 500 });
-    }
-
-    let variations: string[] = [];
-    try {
-      variations = await generateOutreachMessages({
-        contact_name: lead.contact_name,
-        business_name: lead.business_name,
-        industry: lead.industry,
-        summary: lead.summary,
-        raw_payload: lead.raw_payload as Record<string, unknown> | null,
-      });
-      const stored = JSON.stringify(variations);
-      await supabaseAdmin
-        .from('leads')
-        .update({ generated_message: stored, updated_at: new Date().toISOString() })
-        .eq('id', lead.id);
-    } catch (aiErr) {
-      console.error('[leads] AI generate error', aiErr);
-      return NextResponse.json({
-        lead_id: lead.id,
-        error: 'Lead created but AI message generation failed',
-        details: aiErr instanceof Error ? aiErr.message : String(aiErr),
-      }, { status: 500 });
-    }
-
-    if (!data.auto_send) {
-      return NextResponse.json({
-        lead_id: lead.id,
-        generated_messages: variations,
-        whatsapp_queued: false,
-      });
-    }
-
-    const messageToSend = pickOneMessage(JSON.stringify(variations))!;
-
-    // WhatsApp only by default: queue for Python sender (mimics human, uses your WhatsApp)
-    await supabaseAdmin.from('sends').insert({
-      lead_id: lead.id,
-      channel: 'whatsapp',
-      message_text: messageToSend,
-      status: 'pending',
-    });
-
-    let emailResult: { id?: string; error?: unknown } | null = null;
-    if (data.send_email && lead.contact_email) {
-      const subject = process.env.OUTREACH_EMAIL_SUBJECT || 'Uma oportunidade para sua clínica';
-      emailResult = await sendOutreachEmail(lead.contact_email, subject, messageToSend);
-      await supabaseAdmin.from('sends').insert({
-        lead_id: lead.id,
-        channel: 'email',
-        message_text: messageToSend,
-        status: emailResult.error ? 'failed' : 'sent',
-        sent_at: emailResult.error ? null : new Date().toISOString(),
-        error_message: emailResult.error ? String(emailResult.error) : null,
-      });
-    }
-
-    return NextResponse.json({
-      lead_id: lead.id,
-      generated_messages: variations,
-      whatsapp: 'queued',
-      email: data.send_email
-        ? (emailResult?.error ? { error: String(emailResult.error) } : { sent: true, id: emailResult?.id })
-        : 'skipped',
-    });
-  } catch (e) {
-    if (e instanceof z.ZodError) {
-      return NextResponse.json({ error: 'Invalid payload', details: e.issues }, { status: 400 });
-    }
-    console.error('[leads] error', e);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  const { data, error } = await query;
+  if (error) {
+    console.error('[leads] GET', error);
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
+  return NextResponse.json({ leads: data ?? [] });
 }

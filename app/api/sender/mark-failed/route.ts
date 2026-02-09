@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
+import { getSellerBySenderToken } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-
-function requireSenderToken(req: NextRequest): boolean {
-  const auth = req.headers.get('authorization');
-  const token = process.env.SENDER_SERVICE_TOKEN;
-  if (!token) return false;
-  return auth === `Bearer ${token}`;
-}
 
 const bodySchema = z.object({
   send_id: z.string().uuid(),
@@ -18,12 +12,23 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  if (!requireSenderToken(request)) {
+  const seller = await getSellerBySenderToken(request);
+  if (!seller) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
     const body = await request.json();
     const { send_id, error_message } = bodySchema.parse(body);
+
+    const { data: sendRow, error: fetchErr } = await supabaseAdmin
+      .from('sends')
+      .select('id')
+      .eq('id', send_id)
+      .eq('assigned_to', seller.id)
+      .single();
+    if (fetchErr || !sendRow) {
+      return NextResponse.json({ error: 'Send not found or forbidden' }, { status: 404 });
+    }
 
     const { error } = await supabaseAdmin
       .from('sends')
@@ -32,7 +37,8 @@ export async function POST(request: NextRequest) {
         error_message: error_message ?? null,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', send_id);
+      .eq('id', send_id)
+      .eq('assigned_to', seller.id);
 
     if (error) {
       console.error('[sender/mark-failed]', error);

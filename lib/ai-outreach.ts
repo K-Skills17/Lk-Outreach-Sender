@@ -18,7 +18,7 @@ export interface LeadForAI {
   raw_payload?: Record<string, unknown> | null;
 }
 
-const SYSTEM_PROMPT = `You are an expert at writing short, personalized outreach messages to dentists (Brazil, Portuguese).
+const BASE_SYSTEM_PROMPT = `You are an expert at writing short, personalized outreach messages to dentists (Brazil, Portuguese).
 
 Given scraped/enriched lead data and analysis about their business, write exactly 3 SHORT variations of an outreach message. Each variation must:
 1. Start with what they are doing RIGHT (one specific positive).
@@ -38,13 +38,22 @@ Output ONLY a valid JSON array of exactly 3 strings. No other text. Example: ["F
 
 /**
  * Generate 3 outreach message variations from lead data. One is picked at send time.
+ * @param userInstructions - Optional; appended to system prompt so the model follows your instructions.
  */
-export async function generateOutreachMessages(lead: LeadForAI): Promise<string[]> {
+export async function generateOutreachMessages(
+  lead: LeadForAI,
+  userInstructions?: string | null
+): Promise<string[]> {
+  const systemContent =
+    BASE_SYSTEM_PROMPT +
+    (userInstructions?.trim()
+      ? `\n\nAdditional instructions you MUST follow: ${userInstructions.trim()}`
+      : '');
   const userContent = buildUserContent(lead);
   const completion = await getOpenAI().chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemContent },
       { role: 'user', content: userContent },
     ],
     temperature: 0.7,

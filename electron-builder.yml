@@ -1,0 +1,14 @@
+appId: com.lk.outreach-sender
+productName: LK Outreach Sender
+directories:
+  output: release
+extraResources:
+  - from: electron-resources/standalone
+    to: standalone
+  - from: electron-resources/node
+    to: node
+files:
+  - electron/** 
+win:
+  target:
+    - nsis

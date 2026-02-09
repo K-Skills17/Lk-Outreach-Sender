@@ -8,6 +8,8 @@ node_modules
 out
 build
 dist
+release
+electron-resources
 
 # env
 .env

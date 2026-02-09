@@ -2,26 +2,31 @@
   "name": "lk-outreach-sender",
   "version": "1.0.0",
   "private": true,
-  "description": "Minimal outreach app: receive leads from lead-gen tool, AI-generate custom messages, send via WhatsApp and email. No payments, no tiers.",
+  "description": "Standalone outreach: CSV upload, templates, AI messages, queue WhatsApp. No webhooks, no email.",
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "electron:dev": "npm run build && node scripts/prepare-electron-resources.js && electron .",
+    "electron:build": "npm run build && node scripts/prepare-electron-resources.js && electron-builder --win"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.90.1",
     "next": "16.1.1",
     "openai": "^6.16.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "resend": "^6.7.0",
     "zod": "^4.3.5"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "electron": "^28.2.0",
+    "electron-builder": "^24.9.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
     "typescript": "^5"
