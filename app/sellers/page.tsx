@@ -1,9 +1,45 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 
 type Seller = { id: string; email: string; name: string | null; role: string; created_at: string };
+type BatchResult = { email: string; name: string | null; success: boolean; sender_token?: string; error?: string };
+
+function parseCSV(text: string): { email: string; name?: string; password: string }[] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) return [];
+
+  const header = lines[0].toLowerCase().split(',').map((h) => h.trim());
+  const emailIdx = header.indexOf('email');
+  const nameIdx = header.indexOf('name');
+  const passwordIdx = header.indexOf('password');
+
+  if (emailIdx === -1 || passwordIdx === -1) return [];
+
+  const results: { email: string; name?: string; password: string }[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',').map((c) => c.trim());
+    const email = cols[emailIdx];
+    const password = cols[passwordIdx];
+    if (!email || !password) continue;
+    const entry: { email: string; name?: string; password: string } = { email, password };
+    if (nameIdx !== -1 && cols[nameIdx]) entry.name = cols[nameIdx];
+    results.push(entry);
+  }
+  return results;
+}
+
+function downloadCSVTemplate() {
+  const template = 'email,name,password\njohn@example.com,John Smith,securepass123\njane@example.com,Jane Doe,anotherpass456\n';
+  const blob = new Blob([template], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'sdr_template.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function SellersPage() {
   const [sellers, setSellers] = useState<Seller[]>([]);
@@ -19,6 +55,14 @@ export default function SellersPage() {
   const [newPassword, setNewPassword] = useState('');
   const [regenId, setRegenId] = useState<string | null>(null);
   const [regenToken, setRegenToken] = useState<string | null>(null);
+
+  // Batch upload state
+  const [showBatch, setShowBatch] = useState(false);
+  const [batchParsed, setBatchParsed] = useState<{ email: string; name?: string; password: string }[]>([]);
+  const [batchUploading, setBatchUploading] = useState(false);
+  const [batchResults, setBatchResults] = useState<BatchResult[] | null>(null);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
     const res = await fetch('/api/sellers');
@@ -96,6 +140,66 @@ export default function SellersPage() {
     }
   }
 
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target?.result as string;
+      const parsed = parseCSV(text);
+      if (parsed.length === 0) {
+        setBatchError('Could not parse CSV. Make sure it has "email" and "password" columns with a header row.');
+        return;
+      }
+      setBatchError(null);
+      setBatchParsed(parsed);
+    };
+    reader.readAsText(file);
+  }
+
+  async function handleBatchCreate() {
+    if (batchParsed.length === 0) return;
+    setBatchUploading(true);
+    setBatchError(null);
+    setBatchResults(null);
+    try {
+      const res = await fetch('/api/sellers/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sdrs: batchParsed }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setBatchError(data.error ?? 'Failed to create SDRs');
+        return;
+      }
+      setBatchResults(data.results);
+      setBatchParsed([]);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      load();
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : 'Request failed');
+    } finally {
+      setBatchUploading(false);
+    }
+  }
+
+  function exportBatchResults() {
+    if (!batchResults) return;
+    const header = 'email,name,status,sender_token,error';
+    const rows = batchResults.map((r) =>
+      [r.email, r.name ?? '', r.success ? 'created' : 'failed', r.sender_token ?? '', r.error ?? ''].join(',')
+    );
+    const csv = [header, ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sdr_results.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="app-shell">
       <main className="app-main">
@@ -104,13 +208,134 @@ export default function SellersPage() {
         </div>
         <div className="page-header">
           <h1>SDRs</h1>
-          <button type="button" className="btn btn-secondary" onClick={() => setShowAdd(!showAdd)}>
-            {showAdd ? 'Cancel' : 'Add SDR'}
-          </button>
+          <span style={{ display: 'flex', gap: '0.5rem' }}>
+            <button type="button" className="btn btn-secondary" onClick={() => { setShowBatch(!showBatch); setShowAdd(false); }}>
+              {showBatch ? 'Cancel' : 'Batch Upload'}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={() => { setShowAdd(!showAdd); setShowBatch(false); }}>
+              {showAdd ? 'Cancel' : 'Add SDR'}
+            </button>
+          </span>
         </div>
         <p style={{ color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
           Add SDRs (sellers). Each gets a sender token for the Python app. Reset password or regenerate token as needed.
         </p>
+
+        {/* Batch Upload Section */}
+        {showBatch && (
+          <div className="card" style={{ marginBottom: '1rem' }}>
+            <h3 style={{ marginBottom: '0.75rem' }}>Batch Create SDRs from CSV</h3>
+            <p style={{ color: 'var(--color-text-muted)', marginBottom: '0.75rem', fontSize: '0.875rem' }}>
+              Upload a CSV file with columns: <strong>email</strong>, <strong>name</strong> (optional), <strong>password</strong>.
+              Up to 100 SDRs per batch.
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-ghost" onClick={downloadCSVTemplate}>
+                Download CSV template
+              </button>
+            </div>
+            <div className="form-group">
+              <label>Select CSV file</label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleFileSelect}
+              />
+            </div>
+            {batchError && <div className="alert alert-error" style={{ marginBottom: '0.75rem' }}>{batchError}</div>}
+            {batchParsed.length > 0 && (
+              <>
+                <p style={{ marginBottom: '0.75rem' }}>
+                  <strong>{batchParsed.length}</strong> SDR{batchParsed.length !== 1 ? 's' : ''} found in CSV:
+                </p>
+                <div className="table-wrap" style={{ marginBottom: '1rem', maxHeight: '200px', overflowY: 'auto' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Email</th>
+                        <th>Name</th>
+                        <th>Password</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batchParsed.map((s, i) => (
+                        <tr key={i}>
+                          <td>{i + 1}</td>
+                          <td>{s.email}</td>
+                          <td>{s.name ?? '—'}</td>
+                          <td>{'•'.repeat(Math.min(s.password.length, 12))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleBatchCreate}
+                  disabled={batchUploading}
+                >
+                  {batchUploading ? 'Creating SDRs…' : `Create ${batchParsed.length} SDR${batchParsed.length !== 1 ? 's' : ''}`}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Batch Results */}
+        {batchResults && (
+          <div className="card" style={{ marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <h3>
+                Batch Results: {batchResults.filter((r) => r.success).length} created, {batchResults.filter((r) => !r.success).length} failed
+              </h3>
+              <span style={{ display: 'flex', gap: '0.5rem' }}>
+                <button type="button" className="btn btn-secondary" onClick={exportBatchResults}>
+                  Export results CSV
+                </button>
+                <button type="button" className="btn btn-ghost" onClick={() => setBatchResults(null)}>
+                  Dismiss
+                </button>
+              </span>
+            </div>
+            <p style={{ color: 'var(--color-text-muted)', marginBottom: '0.75rem', fontSize: '0.875rem' }}>
+              Download the results CSV to save sender tokens. Tokens are shown only once.
+            </p>
+            <div className="table-wrap" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Name</th>
+                    <th>Status</th>
+                    <th>Sender Token</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batchResults.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.email}</td>
+                      <td>{r.name ?? '—'}</td>
+                      <td>
+                        <span style={{ color: r.success ? 'var(--color-success, green)' : 'var(--color-error, red)' }}>
+                          {r.success ? 'Created' : r.error ?? 'Failed'}
+                        </span>
+                      </td>
+                      <td>
+                        {r.sender_token ? (
+                          <code style={{ fontSize: '0.75rem', wordBreak: 'break-all' }}>{r.sender_token}</code>
+                        ) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {showAdd && (
           <div className="card" style={{ marginBottom: '1rem' }}>
             <form onSubmit={handleAdd}>
